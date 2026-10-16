@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GymLog">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>GymLog</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--card2:#20242d;--tx:#eef0f4;--mut:#8b93a3;--ac:#b6f23a;--acx:#10140a;--red:#ff6b6b;--bd:#2a2f3a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+body{padding:env(safe-area-inset-top) 0 0}
+#app{padding:14px 14px calc(90px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto}
+h1{font-size:22px;margin:6px 0 12px}
+h2{font-size:17px;margin:0}
+input,select,button,textarea{font:inherit;font-size:16px;color:var(--tx)}
+input,select,textarea{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:10px;width:100%;min-width:0}
+input:focus,select:focus{outline:2px solid var(--ac);border-color:transparent}
+.btn{background:var(--ac);color:var(--acx);border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn.sec{background:var(--card2);color:var(--tx);border:1px solid var(--bd)}
+.btn.del{background:transparent;color:var(--red);border:1px solid var(--red)}
+.btn.sm{padding:6px 10px;font-size:14px}
+.bar{display:flex;gap:8px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:12px}
+.card .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px}
+.mut{color:var(--mut);font-size:13px}
+.set{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd)}
+.set .n{width:22px;color:var(--mut);font-size:13px}
+.set .v{flex:1;font-weight:600}
+.badge{font-size:11px;font-weight:700;border-radius:6px;padding:2px 6px}
+.badge.E{background:var(--ac);color:var(--acx)}
+.badge.A{background:#3a3f4d;color:#cfd4df}
+.ib{background:none;border:0;color:var(--mut);font-size:18px;padding:4px 8px;cursor:pointer}
+.form{display:grid;grid-template-columns:1.2fr 1fr .9fr 1.3fr auto;gap:6px;margin-top:8px}
+.form input,.form select{padding:9px 6px;text-align:center}
+.empty{color:var(--mut);text-align:center;margin:40px 0}
+nav{position:fixed;left:0;right:0;bottom:0;background:rgba(15,17,21,.94);backdrop-filter:blur(12px);border-top:1px solid var(--bd);display:flex;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;color:var(--mut);padding:10px 0 8px;font-size:11px;cursor:pointer}
+nav button span{display:block;font-size:20px}
+nav button.on{color:var(--ac)}
+dialog{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:16px;width:min(92vw,420px);padding:16px;max-height:85vh;overflow:auto}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.row{display:flex;gap:8px;margin:8px 0}
+.row>*{flex:1}
+label{display:block;font-size:13px;color:var(--mut);margin-top:10px}
+.list button.item{display:block;width:100%;text-align:left;background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:6px;cursor:pointer}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.stat{background:var(--card2);border-radius:10px;padding:10px;text-align:center}
+.stat b{display:block;font-size:18px;color:var(--ac)}
+svg{width:100%;height:auto;display:block}
+.sess{border-top:1px solid var(--bd);padding:8px 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav>
+  <button data-tab="hoy"><span>🏋️</span>Entreno</button>
+  <button data-tab="ejercicios"><span>📋</span>Ejercicios</button>
+  <button data-tab="progreso"><span>📈</span>Progreso</button>
+  <button data-tab="ajustes"><span>⚙️</span>Ajustes</button>
+</nav>
+<dialog id="dlg"></dialog>
+<input type="file" id="file" accept="application/json" hidden>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today = () => new Date().toLocaleDateString('en-CA');
+const fmt = n => (Math.round(n * 100) / 100).toString();
+const e1rm = (w, r) => w > 0 ? w * (1 + r / 30) : 0;
+
+let db, ex = [], sets = [], tab = 'hoy', date = today(), progId = null;
+let extra = {};
+let unit = localStorage.getItem('unit') || 'kg';
+let persisted = false;
+
+/* ---------- IndexedDB ---------- */
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('gymlog', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('exercises', { keyPath: 'id', autoIncrement: true });
+      d.createObjectStore('sets', { keyPath: 'id', autoIncrement: true });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+const tx = (store, mode, fn) => new Promise((res, rej) => {
+  const t = db.transaction(store, mode);
+  const out = fn(t.objectStore(store));
+  t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
+  t.onerror = () => rej(t.error);
+});
+const getAll = s => tx(s, 'readonly', st => st.getAll());
+const put = (s, o) => tx(s, 'readwrite', st => st.put(o));
+const del = (s, id) => tx(s, 'readwrite', st => st.delete(id));
+const clr = s => tx(s, 'readwrite', st => st.clear());
+async function load() { ex = await getAll('exercises'); sets = await getAll('sets'); }
+
+const SEED = [
+  ['Press banca', 'Pecho'], ['Press inclinado mancuernas', 'Pecho'], ['Sentadilla', 'Pierna'],
+  ['Peso muerto', 'Espalda'], ['Prensa', 'Pierna'], ['Press militar', 'Hombro'],
+  ['Remo con barra', 'Espalda'], ['Jalón al pecho', 'Espalda'], ['Dominadas', 'Espalda'],
+  ['Curl de bíceps', 'Brazo'], ['Extensión de tríceps', 'Brazo']
+];
+async function seedIfEmpty() {
+  if (ex.length || localStorage.getItem('seeded')) return;
+  for (const [name, group] of SEED) await put('exercises', { name, group, notes: '' });
+  localStorage.setItem('seeded', '1');
+  await load();
+}
+
+/* ---------- helpers de datos ---------- */
+const exById = id => ex.find(e => e.id === id);
+const setsOf = id => sets.filter(s => s.exerciseId === id);
+function lastSet(id) {
+  const l = setsOf(id).sort((a, b) => b.ts - a.ts);
+  return l[0];
+}
+function prevSession(id, d) {
+  const prev = setsOf(id).filter(s => s.date < d);
+  if (!prev.length) return null;
+  const last = prev.reduce((m, s) => s.date > m ? s.date : m, '');
+  return prev.filter(s => s.date === last).sort((a, b) => a.ts - b.ts);
+}
+const line = s => `${fmt(s.weight)}×${s.reps}`;
+
+/* ---------- vistas ---------- */
+function card(id, ds) {
+  const e = exById(id); if (!e) return '';
+  const prev = prevSession(id, date);
+  const eff = prev ? prev.filter(s => s.type === 'E') : [];
+  const last = ds.length ? ds[ds.length - 1] : (prev ? prev[prev.length - 1] : lastSet(id));
+  const prevTxt = prev ? `Última vez (${prev[0].date.slice(5)}): ${(eff.length ? eff : prev).map(line).join(', ')}` : 'Primera vez con este ejercicio';
+  let ne = 0, na = 0;
+  const rows = ds.map(s => {
+    const n = s.type === 'E' ? ++ne : ++na;
+    return `<div class="set"><span class="n">${s.type}${n}</span>
+      <span class="v">${fmt(s.weight)} ${unit} × ${s.reps}${s.rpe ? ` <span class="mut">· RPE ${fmt(s.rpe)}</span>` : ''}${s.note ? `<div class="mut" style="font-weight:400">${esc(s.note)}</div>` : ''}</span>
+      <span class="badge ${s.type}">${s.type === 'E' ? 'Efectiva' : 'Aprox.'}</span>
+      <button class="ib" data-a="editset" data-id="${s.id}">✎</button>
+      <button class="ib" data-a="delset" data-id="${s.id}">✕</button></div>`;
+  }).join('');
+  const t = last ? last.type : 'E';
+  return `<div class="card">
+    <div class="hd"><div><h2>${esc(e.name)}</h2><div class="mut">${esc(e.group || '')} · ${prevTxt}</div></div>
+    ${ds.length ? '' : `<button class="ib" data-a="rmcard" data-id="${id}">✕</button>`}</div>
+    ${rows}
+    <div class="form">
+      <input id="w-${id}" inputmode="decimal" placeholder="${unit}" value="${last ? fmt(last.weight) : ''}">
+      <input id="r-${id}" inputmode="numeric" placeholder="reps" value="${last ? last.reps : ''}">
+      <input id="p-${id}" inputmode="decimal" placeholder="RPE">
+      <select id="t-${id}"><option value="E" ${t === 'E' ? 'selected' : ''}>Efectiva</option><option value="A" ${t === 'A' ? 'selected' : ''}>Aprox.</option></select>
+      <button class="btn" data-a="addset" data-id="${id}">＋</button>
+    </div></div>`;
+}
+function vHoy() {
+  const ds = sets.filter(s => s.date === date).sort((a, b) => a.ts - b.ts);
+  const ids = [...new Set([...ds.map(s => s.exerciseId), ...(extra[date] || [])])];
+  const vol = ds.filter(s => s.type === 'E').reduce((a, s) => a + s.weight * s.reps, 0);
+  return `<h1>Entreno</h1>
+  <div class="bar"><input type="date" id="dt" value="${date}"><button class="btn" data-a="addex">+ Ejercicio</button></div>
+  ${ds.length ? `<div class="mut" style="margin:-4px 0 10px">${ds.filter(s => s.type === 'E').length} series efectivas · volumen ${fmt(vol)} ${unit}</div>` : ''}
+  ${ids.map(id => card(id, ds.filter(s => s.exerciseId === id))).join('') || '<p class="empty">Sin ejercicios este día.<br>Toca “+ Ejercicio” para empezar.</p>'}`;
+}
+function vEj() {
+  const l = [...ex].sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.name.localeCompare(b.name));
+  return `<h1>Ejercicios</h1>
+  <div class="bar"><button class="btn" data-a="exnew" style="flex:1">+ Nuevo ejercicio</button></div>
+  ${l.map(e => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <div><h2>${esc(e.name)}</h2><div class="mut">${esc(e.group || 'Sin grupo')} · ${setsOf(e.id).length} series</div></div>
+    <button class="btn sec sm" data-a="exedit" data-id="${e.id}">Editar</button></div>`).join('') || '<p class="empty">No hay ejercicios.</p>'}`;
+}
+function chart(pts) {
+  if (pts.length < 2) return '<p class="mut">Necesitas al menos 2 sesiones para ver la gráfica.</p>';
+  const W = 320, H = 140, p = 24;
+  const ys = pts.map(q => q.y), mn = Math.min(...ys), mx = Math.max(...ys), rg = (mx - mn) || 1;
+  const X = i => p + i * (W - 2 * p) / (pts.length - 1), Y = v => H - p - (v - mn) / rg * (H - 2 * p);
+  const d = pts.map((q, i) => `${X(i)},${Y(q.y)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}"><polyline points="${d}" fill="none" stroke="#b6f23a" stroke-width="2.5"/>
+  ${pts.map((q, i) => `<circle cx="${X(i)}" cy="${Y(q.y)}" r="3.5" fill="#b6f23a"/>`).join('')}
+  <text x="${p}" y="12" fill="#8b93a3" font-size="10">${fmt(mx)}</text><text x="${p}" y="${H - 6}" fill="#8b93a3" font-size="10">${fmt(mn)}</text>
+  <text x="${W - p}" y="${H - 6}" fill="#8b93a3" font-size="10" text-anchor="end">${pts[pts.length - 1].d.slice(5)}</text></svg>`;
+}
+function vProg() {
+  const used = ex.filter(e => setsOf(e.id).length);
+  if (!used.length) return '<h1>Progreso</h1><p class="empty">Registra series para ver tu progreso.</p>';
+  if (!progId || !used.find(e => e.id === progId)) progId = used[0].id;
+  const all = setsOf(progId), eff = all.filter(s => s.type === 'E');
+  const byDate = {};
+  all.forEach(s => (byDate[s.date] ||= []).push(s));
+  const dates = Object.keys(byDate).sort();
+  const pts = dates.map(d => {
+    const e = byDate[d].filter(s => s.type === 'E');
+    return { d, y: Math.max(0, ...e.map(s => e1rm(s.weight, s.reps))) };
+  }).filter(q => q.y > 0).slice(-20);
+  const maxW = Math.max(0, ...eff.map(s => s.weight));
+  const best = Math.max(0, ...eff.map(s => e1rm(s.weight, s.reps)));
+  const vol = eff.reduce((a, s) => a + s.weight * s.reps, 0);
+  return `<h1>Progreso</h1>
+  <select id="pe">${used.map(e => `<option value="${e.id}" ${e.id === progId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>
+  <div class="stats"><div class="stat"><b>${fmt(maxW)}</b><span class="mut">Peso máx (${unit})</span></div>
+  <div class="stat"><b>${fmt(best)}</b><span class="mut">1RM est.</span></div>
+  <div class="stat"><b>${fmt(vol)}</b><span class="mut">Volumen total</span></div></div>
+  <div class="card"><div class="mut" style="margin-bottom:6px">1RM estimado por sesión (Epley, solo series efectivas)</div>${chart(pts)}</div>
+  <div class="card"><h2>Historial</h2>${[...dates].reverse().map(d => `<div class="sess"><div class="mut">${d}</div>
+    ${byDate[d].sort((a, b) => a.ts - b.ts).map(s => `<span class="badge ${s.type}" style="margin-right:4px">${s.type}</span>${line(s)}${s.rpe ? ` @${fmt(s.rpe)}` : ''} &nbsp;`).join('')}</div>`).join('')}</div>`;
+}
+function vSet() {
+  return `<h1>Ajustes</h1>
+  <div class="card"><label style="margin-top:0">Unidad de peso</label>
+  <select id="un"><option value="kg" ${unit === 'kg' ? 'selected' : ''}>Kilogramos (kg)</option><option value="lb" ${unit === 'lb' ? 'selected' : ''}>Libras (lb)</option></select></div>
+  <div class="card"><h2>Respaldo</h2><p class="mut">${ex.length} ejercicios · ${sets.length} series guardadas en este dispositivo. Exporta un respaldo de vez en cuando.</p>
+  <div class="row"><button class="btn" data-a="export">Exportar JSON</button><button class="btn sec" data-a="import">Importar</button></div></div>
+  <div class="card"><h2>Almacenamiento</h2><p class="mut">${persisted ? '✅ Persistente: iOS no debería borrar tus datos.' : '⚠️ No marcado como persistente. Instala la app en la pantalla de inicio y expórtala seguido.'}</p></div>
+  <div class="card"><h2>Zona peligrosa</h2><button class="btn del" data-a="wipe" style="margin-top:8px">Borrar todos los datos</button></div>`;
+}
+const views = { hoy: vHoy, ejercicios: vEj, progreso: vProg, ajustes: vSet };
+function render() {
+  $('#app').innerHTML = views[tab]();
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+}
+
+/* ---------- modales ---------- */
+const dlg = $('#dlg');
+function modal(html) { dlg.innerHTML = html; if (!dlg.open) dlg.showModal(); }
+const closeM = () => dlg.open && dlg.close();
+const v = id => $('#' + id).value;
+
+function exForm(e) {
+  const groups = ['Pecho', 'Espalda', 'Pierna', 'Hombro', 'Brazo', 'Core', 'Cardio', 'Otro'];
+  modal(`<h2>${e ? 'Editar' : 'Nuevo'} ejercicio</h2>
+  <label>Nombre</label><input id="f-name" value="${esc(e?.name || '')}" autocomplete="off">
+  <label>Grupo muscular</label><select id="f-group">${groups.map(g => `<option ${e?.group === g ? 'selected' : ''}>${g}</option>`).join('')}</select>
+  <label>Notas</label><input id="f-notes" value="${esc(e?.notes || '')}" placeholder="Agarre, ajuste de máquina…">
+  <div class="row"><button class="btn sec" data-a="close">Cancelar</button><button class="btn" data-a="exsave" data-id="${e?.id || ''}">Guardar</button></div>
+  ${e ? `<button class="btn del" data-a="exdel" data-id="${e.id}" style="width:100%;margin-top:6px">Eliminar ejercicio</button>` : ''}`);
+}
+
+/* ---------- acciones ---------- */
+const actions = {
+  close: closeM,
+  addex() {
+    const l = [...ex].sort((a, b) => a.name.localeCompare(b.name));
+    modal(`<h2>Agregar ejercicio</h2><div class="list" style="margin-top:10px">
+      ${l.map(e => `<button class="item" data-a="pickex" data-id="${e.id}">${esc(e.name)} <span class="mut">· ${esc(e.group || '')}</span></button>`).join('')}</div>
+      <div class="row"><button class="btn sec" data-a="close">Cerrar</button><button class="btn" data-a="exnew">+ Crear nuevo</button></div>`);
+  },
+  pickex(el) {
+    const id = +el.dataset.id;
+    (extra[date] ||= []);
+    if (!extra[date].includes(id)) extra[date].push(id);
+    closeM(); render();
+  },
+  rmcard(el) { extra[date] = (extra[date] || []).filter(i => i !== +el.dataset.id); render(); },
+  async addset(el) {
+    const id = +el.dataset.id;
+    const w = parseFloat(v('w-' + id).replace(',', '.')), r = parseInt(v('r-' + id));
+    const rpe = parseFloat(v('p-' + id).replace(',', '.'));
+    if (isNaN(w) || w < 0 || !r || r < 1) { alert('Escribe un peso (0 si es corporal) y las repeticiones.'); return; }
+    await put('sets', { exerciseId: id, date, weight: w, reps: r, type: v('t-' + id), rpe: isNaN(rpe) ? null : rpe, note: '', ts: Date.now() });
+    await load(); render();
+    if (navigator.vibrate) navigator.vibrate(15);
+  },
+  editset(el) {
+    const s = sets.find(x => x.id === +el.dataset.id);
+    modal(`<h2>Editar serie</h2><div class="row">
+      <div><label>Peso (${unit})</label><input id="e-w" inputmode="decimal" value="${s.weight}"></div>
+      <div><label>Reps</label><input id="e-r" inputmode="numeric" value="${s.reps}"></div>
+      <div><label>RPE</label><input id="e-p" inputmode="decimal" value="${s.rpe ?? ''}"></div></div>
+      <label>Tipo</label><select id="e-t"><option value="E" ${s.type === 'E' ? 'selected' : ''}>Efectiva</option><option value="A" ${s.type === 'A' ? 'selected' : ''}>Aproximación</option></select>
+      <label>Nota</label><input id="e-n" value="${esc(s.note || '')}">
+      <div class="row"><button class="btn sec" data-a="close">Cancelar</button><button class="btn" data-a="saveset" data-id="${s.id}">Guardar</button></div>`);
+  },
+  async saveset(el) {
+    const s = sets.find(x => x.id === +el.dataset.id);
+    const w = parseFloat(v('e-w').replace(',', '.')), r = parseInt(v('e-r')), p = parseFloat(v('e-p').replace(',', '.'));
+    if (isNaN(w) || !r) return alert('Peso y reps inválidos.');
+    Object.assign(s, { weight: w, reps: r, rpe: isNaN(p) ? null : p, type: v('e-t'), note: v('e-n') });
+    await put('sets', s); await load(); closeM(); render();
+  },
+  async delset(el) {
+    if (!confirm('¿Eliminar esta serie?')) return;
+    await del('sets', +el.dataset.id); await load(); render();
+  },
+  exnew() { exForm(null); },
+  exedit(el) { exForm(exById(+el.dataset.id)); },
+  async exsave(el) {
+    const name = v('f-name').trim(); if (!name) return alert('Ponle nombre.');
+    const o = { name, group: v('f-group'), notes: v('f-notes') };
+    if (el.dataset.id) o.id = +el.dataset.id;
+    await put('exercises', o); await load(); closeM(); render();
+  },
+  async exdel(el) {
+    const id = +el.dataset.id, n = setsOf(id).length;
+    if (!confirm(n ? `Se eliminarán también ${n} series de este ejercicio. ¿Continuar?` : '¿Eliminar ejercicio?')) return;
+    for (const s of setsOf(id)) await del('sets', s.id);
+    await del('exercises', id); await load(); closeM(); render();
+  },
+  async export() {
+    const data = JSON.stringify({ app: 'gymlog', version: 1, exportedAt: new Date().toISOString(), exercises: ex, sets }, null, 2);
+    const name = `gymlog-${today()}.json`;
+    const file = new File([data], name, { type: 'application/json' });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+    } catch (e) { if (e.name === 'AbortError') return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  },
+  import() { $('#file').click(); },
+  async wipe() {
+    if (!confirm('Esto borra TODOS tus ejercicios y series. ¿Seguro?')) return;
+    if (!confirm('Última confirmación: no se puede deshacer.')) return;
+    await clr('sets'); await clr('exercises'); localStorage.setItem('seeded', '1'); await load(); render();
+  }
+};
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-a]');
+  if (t && actions[t.dataset.a]) { actions[t.dataset.a](t); return; }
+  const n = e.target.closest('nav button');
+  if (n) { tab = n.dataset.tab; render(); window.scrollTo(0, 0); }
+});
+document.addEventListener('change', async e => {
+  if (e.target.id === 'dt' && e.target.value) { date = e.target.value; render(); }
+  if (e.target.id === 'pe') { progId = +e.target.value; render(); }
+  if (e.target.id === 'un') { unit = e.target.value; localStorage.setItem('unit', unit); render(); }
+  if (e.target.id === 'file' && e.target.files[0]) {
+    try {
+      const d = JSON.parse(await e.target.files[0].text());
+      if (!Array.isArray(d.exercises) || !Array.isArray(d.sets)) throw 0;
+      if (!confirm(`Importar ${d.exercises.length} ejercicios y ${d.sets.length} series? Esto reemplaza los datos actuales.`)) return;
+      await clr('sets'); await clr('exercises');
+      for (const x of d.exercises) await put('exercises', x);
+      for (const x of d.sets) await put('sets', x);
+      localStorage.setItem('seeded', '1');
+      await load(); render(); alert('Importado.');
+    } catch { alert('Archivo inválido.'); }
+    e.target.value = '';
+  }
+});
+
+/* ---------- init ---------- */
+(async () => {
+  db = await openDB();
+  await load(); await seedIfEmpty();
+  try { if (navigator.storage?.persist) persisted = await navigator.storage.persist(); } catch {}
+  render();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
